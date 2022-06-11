@@ -1,16 +1,16 @@
 from contextlib import aclosing
-from typing import AsyncGenerator, Protocol
+from typing import AsyncGenerator, Protocol, Union
 
 from starlette.datastructures import Headers
 from starlette.requests import HTTPConnection
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-DispatchResponse = AsyncGenerator[HTTPConnection, Response]
-
 
 class SimpleDispatchFunction(Protocol):
-    def __call__(self, __request: HTTPConnection) -> DispatchResponse:
+    def __call__(
+        self, __request: HTTPConnection
+    ) -> Union[AsyncGenerator[None, Response], AsyncGenerator[Response, Response]]:
         ...  # pragma: no cover
 
 
@@ -33,13 +33,16 @@ class SimpleHTTPMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         conn = HTTPConnection(scope)
         async with aclosing(self._dispatch(conn)) as gen:
-            scope = (await gen.__anext__()).scope
+            http_connection_or_response = await gen.__anext__()
+            if http_connection_or_response is not None:  # a Response instance
+                await http_connection_or_response(scope, receive, send)
+                return
 
             async def wrapped_send(message: Message) -> None:
                 if message["type"] == "http.response.start":
                     headers = Headers(raw=message["headers"])
                     media_type = headers.get("Content-Type")
-                    response = _UnsendableResponse(
+                    response: "Response" = _UnsendableResponse(
                         status_code=message["status"],
                         headers=headers,
                         media_type=media_type,
@@ -49,7 +52,7 @@ class SimpleHTTPMiddleware:
                     except StopAsyncIteration:
                         pass
                     else:
-                        raise RuntimeError("Generator did not stop")  # pragma: no cover
+                        raise RuntimeError("Generator did not stop")
                     message["status"] = response.status_code
                     if response.media_type and response.media_type != media_type:
                         response.init_headers(response.headers)
