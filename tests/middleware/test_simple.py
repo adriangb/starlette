@@ -193,7 +193,7 @@ async def test_client_disconnects() -> None:
     async with AsyncExitStack() as stack:
 
         async def body_stream() -> AsyncGenerator[bytes, None]:
-            yield b"foo"
+            yield b""
             raise AssertionError("Should not be called")  # pragma: no cover
 
         body = await stack.enter_async_context(aclosing(body_stream()))
