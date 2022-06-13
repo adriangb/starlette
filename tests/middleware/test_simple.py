@@ -133,7 +133,7 @@ def test_modify_content_type(
 ) -> None:
     async def dispatch(request: HTTPConnection) -> AsyncGenerator[None, Response]:
         resp = yield
-        resp.media_type = "text/plain"
+        resp.media_type = "text/csv"
 
     def homepage(request: Request) -> Response:
         return PlainTextResponse("OK")
@@ -148,7 +148,7 @@ def test_modify_content_type(
     client = test_client_factory(app)
     response = client.get("/")
     assert response.text == "OK"
-    assert response.headers["Content-Type"] == "text/plain; charset=utf-8"
+    assert response.headers["Content-Type"] == "text/csv; charset=utf-8"
 
 
 def test_respond_immediately(

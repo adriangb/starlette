@@ -42,7 +42,8 @@ class SimpleHTTPMiddleware:
         conn = HTTPConnection(scope)
         async with aclosing(self._dispatch(conn)) as gen:
             http_connection_or_response = await gen.__anext__()
-            if http_connection_or_response is not None:  # a Response instance
+            if http_connection_or_response is not None:
+                # we got back a `Response` instance, which is used to exit early
                 await http_connection_or_response(scope, receive, send)
                 return
 
@@ -62,9 +63,13 @@ class SimpleHTTPMiddleware:
                     else:
                         raise RuntimeError("Generator did not stop")
                     message["status"] = response.status_code
+                    headers = response.headers
                     if response.media_type and response.media_type != media_type:
-                        response.init_headers(response.headers)
-                    message["headers"] = response.headers.raw
+                        headers = headers.mutablecopy()
+                        del headers["Content-Type"]
+                        # re-use logic in Response to integrate media_type into headers
+                        headers = Response(headers=headers, media_type=response.media_type).headers
+                    message["headers"] = headers.raw
                 await send(message)
 
             await self._app(scope, receive, wrapped_send)
