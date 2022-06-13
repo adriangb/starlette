@@ -1,5 +1,5 @@
 from contextlib import aclosing
-from typing import AsyncGenerator, Protocol, Union
+from typing import AsyncGenerator, Optional, Protocol
 
 from starlette.datastructures import Headers
 from starlette.requests import HTTPConnection
@@ -9,8 +9,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 class SimpleDispatchFunction(Protocol):
     def __call__(
-        self, __request: HTTPConnection
-    ) -> Union[AsyncGenerator[None, Response], AsyncGenerator[Response, Response]]:
+        self, request: HTTPConnection
+    ) -> AsyncGenerator[Optional[Response], Response]:
         ...  # pragma: no cover
 
 
@@ -22,13 +22,21 @@ class _UnsendableResponse(Response):
 
 
 class SimpleHTTPMiddleware:
+    __slots__ = ("_app", "_dispatch")
+    _dispatch: SimpleDispatchFunction
+
     def __init__(
         self,
         app: ASGIApp,
-        dispatch: SimpleDispatchFunction,
+        dispatch: Optional[SimpleDispatchFunction] = None,
     ) -> None:
         self._app = app
-        self._dispatch = dispatch
+        if dispatch is None:
+            if self.__class__.dispatch is SimpleHTTPMiddleware.dispatch:
+                raise ValueError("No dispatch function provided")
+            self._dispatch = self.dispatch
+        else:
+            self._dispatch = dispatch
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         conn = HTTPConnection(scope)
@@ -60,3 +68,10 @@ class SimpleHTTPMiddleware:
                 await send(message)
 
             await self._app(scope, receive, wrapped_send)
+
+    def dispatch(
+        self, request: HTTPConnection
+    ) -> AsyncGenerator[Optional[Response], Response]:
+        raise NotImplementedError(  # pragma: no cover
+            "You must override this function to use it"
+        )

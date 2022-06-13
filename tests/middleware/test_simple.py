@@ -49,9 +49,10 @@ async def websocket_endpoint(session: WebSocket):
     await session.close()
 
 
-async def custom_middleware(request: HTTPConnection) -> AsyncGenerator[None, Response]:
-    response = yield
-    response.headers["Custom-Header"] = "Example"
+class CustomMiddleware(SimpleHTTPMiddleware):
+    async def dispatch(self, request: HTTPConnection) -> AsyncGenerator[None, Response]:
+        response = yield
+        response.headers["Custom-Header"] = "Example"
 
 
 app = Starlette(
@@ -62,7 +63,7 @@ app = Starlette(
         Route("/no-response", endpoint=NoResponse),
         WebSocketRoute("/ws", endpoint=websocket_endpoint),
     ],
-    middleware=[Middleware(SimpleHTTPMiddleware, dispatch=custom_middleware)],
+    middleware=[Middleware(CustomMiddleware)],
 )
 
 
@@ -234,3 +235,8 @@ async def test_client_disconnects() -> None:
         scope = {"type": "http", "method": "GET", "path": "/"}
 
         await app(scope, recv.__aiter__().__anext__, send.asend)
+
+
+def test_no_dispatch_func() -> None:
+    with pytest.raises(ValueError):
+        SimpleHTTPMiddleware(app)
