@@ -240,3 +240,59 @@ async def test_client_disconnects() -> None:
 def test_no_dispatch_func() -> None:
     with pytest.raises(ValueError):
         SimpleHTTPMiddleware(app)
+
+
+def test_read_request_body(
+    test_client_factory: Callable[[ASGIApp], TestClient]
+) -> None:
+    async def echo_mw(request: Request) -> AsyncGenerator[None, Response]:
+        body = await request.body()
+        assert body == b"foo bar baz"
+        yield
+
+    async def homepage(request: Request) -> Response:
+        # this would hang in BaseHTTPMiddleware
+        body = await request.body()
+        assert body == b"foo bar baz"
+        return Response()
+
+    app = Starlette(
+        routes=[Route("/", homepage)],
+        middleware=[
+            Middleware(SimpleHTTPMiddleware, dispatch=echo_mw),
+        ],
+    )
+
+    client = test_client_factory(app)
+    response = client.get("/", data=b"foo bar baz")
+    assert response.status_code == 200
+
+
+def test_stream_request_body(
+    test_client_factory: Callable[[ASGIApp], TestClient]
+) -> None:
+    async def echo_mw(request: Request) -> AsyncGenerator[None, Response]:
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+        assert body == b"foo bar baz"
+        yield
+
+    async def homepage(request: Request) -> Response:
+        # this would hang in BaseHTTPMiddleware
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+        assert body == b""
+        return Response()
+
+    app = Starlette(
+        routes=[Route("/", homepage)],
+        middleware=[
+            Middleware(SimpleHTTPMiddleware, dispatch=echo_mw),
+        ],
+    )
+
+    client = test_client_factory(app)
+    response = client.get("/", data=b"foo bar baz")
+    assert response.status_code == 200

@@ -2,7 +2,7 @@ from contextlib import aclosing
 from typing import AsyncGenerator, Optional, Protocol
 
 from starlette.datastructures import Headers
-from starlette.requests import HTTPConnection
+from starlette.requests import HTTPConnection, Request
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -39,13 +39,44 @@ class SimpleHTTPMiddleware:
             self._dispatch = dispatch
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        conn = HTTPConnection(scope)
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        read_body: "Optional[bytes]" = None
+
+        class RecordedRequest(Request):
+            async def stream(self) -> AsyncGenerator[bytes, None]:
+                nonlocal read_body
+                async for chunk in super().stream():
+                    yield chunk
+                read_body = b""
+
+            async def body(self) -> bytes:
+                nonlocal read_body
+                body = await super().body()
+                read_body = body
+                return body
+
+        conn = RecordedRequest(scope, receive)
+
         async with aclosing(self._dispatch(conn)) as gen:
             http_connection_or_response = await gen.__anext__()
             if http_connection_or_response is not None:
                 # we got back a `Response` instance, which is used to exit early
                 await http_connection_or_response(scope, receive, send)
                 return
+
+            if read_body is not None:
+
+                async def _receive() -> Message:
+                    return {
+                        "type": "http.request",
+                        "body": read_body,
+                        "more_body": False,
+                    }
+
+                receive = _receive
 
             async def wrapped_send(message: Message) -> None:
                 if message["type"] == "http.response.start":
@@ -68,7 +99,9 @@ class SimpleHTTPMiddleware:
                         headers = headers.mutablecopy()
                         del headers["Content-Type"]
                         # re-use logic in Response to integrate media_type into headers
-                        headers = Response(headers=headers, media_type=response.media_type).headers
+                        headers = Response(
+                            headers=headers, media_type=response.media_type
+                        ).headers
                     message["headers"] = headers.raw
                 await send(message)
 
