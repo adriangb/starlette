@@ -2,6 +2,7 @@ import contextvars
 from contextlib import AsyncExitStack
 from typing import AsyncGenerator, Awaitable, Callable
 
+import anyio
 import pytest
 
 from starlette.applications import Starlette
@@ -215,13 +216,17 @@ def test_contextvars(test_client_factory, middleware_cls: type):
 async def test_background_tasks_client_disconnect() -> None:
     # test for https://github.com/encode/starlette/issues/1527
     app: ASGIApp
-    app = PlainTextResponse("hi!")
+
+    async def homepage(request: Request):
+        await anyio.sleep(5)
+        return PlainTextResponse("hi!")
 
     async def dispatch(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         return await call_next(request)
 
+    app = BaseHTTPMiddleware(Route("/", homepage), dispatch=dispatch)
     app = BaseHTTPMiddleware(app, dispatch=dispatch)
 
     async def recv_gen() -> AsyncGenerator[Message, None]:
@@ -229,6 +234,8 @@ async def test_background_tasks_client_disconnect() -> None:
         yield {"type": "http.disconnect"}
 
     async def send_gen() -> AsyncGenerator[None, Message]:
+        msg = yield
+        assert msg["type"] == "http.response.start"
         msg = yield
         raise AssertionError("Should not be called")
 
