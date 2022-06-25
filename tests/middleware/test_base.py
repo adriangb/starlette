@@ -213,7 +213,7 @@ def test_contextvars(test_client_factory, middleware_cls: type):
 
 
 @pytest.mark.anyio
-async def test_background_tasks_client_disconnect() -> None:
+async def test_client_disconnects_before_response_is_sent() -> None:
     # test for https://github.com/encode/starlette/issues/1527
     app: ASGIApp
 
