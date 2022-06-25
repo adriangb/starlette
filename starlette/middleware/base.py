@@ -4,12 +4,16 @@ import anyio
 
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 RequestResponseEndpoint = typing.Callable[[Request], typing.Awaitable[Response]]
 DispatchFunction = typing.Callable[
     [Request, RequestResponseEndpoint], typing.Awaitable[Response]
 ]
+
+
+class _ClientDisconnected(Exception):
+    pass
 
 
 class BaseHTTPMiddleware:
@@ -28,12 +32,18 @@ class BaseHTTPMiddleware:
             app_exc: typing.Optional[Exception] = None
             send_stream, recv_stream = anyio.create_memory_object_stream()
 
+            async def recv() -> Message:
+                message = await request.receive()
+                if message["type"] == "http.disconnect":
+                    raise _ClientDisconnected
+                return message
+
             async def coro() -> None:
                 nonlocal app_exc
 
                 async with send_stream:
                     try:
-                        await self.app(scope, request.receive, send_stream.send)
+                        await self.app(scope, recv, send_stream.send)
                     except Exception as exc:
                         app_exc = exc
 
@@ -69,7 +79,10 @@ class BaseHTTPMiddleware:
 
         async with anyio.create_task_group() as task_group:
             request = Request(scope, receive=receive)
-            response = await self.dispatch_func(request, call_next)
+            try:
+                response = await self.dispatch_func(request, call_next)
+            except _ClientDisconnected:
+                return
             await response(scope, receive, send)
             task_group.cancel_scope.cancel()
 
