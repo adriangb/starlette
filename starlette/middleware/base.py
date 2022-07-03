@@ -1,3 +1,5 @@
+import contextvars
+import sys
 import typing
 
 import anyio
@@ -12,6 +14,18 @@ DispatchFunction = typing.Callable[
 ]
 
 
+def _restore_context(context: contextvars.Context) -> None:
+    """Copy the state of `context` to the current context."""
+    for cvar in context:
+        newval = context.get(cvar)
+        try:
+            if cvar.get() != newval:
+                cvar.set(newval)
+        except LookupError:
+            # the context variable was first set inside of `context`
+            cvar.set(newval)
+
+
 class BaseHTTPMiddleware:
     def __init__(
         self, app: ASGIApp, dispatch: typing.Optional[DispatchFunction] = None
@@ -23,6 +37,8 @@ class BaseHTTPMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        context = contextvars.copy_context()
 
         async def call_next(request: Request) -> Response:
             app_exc: typing.Optional[Exception] = None
@@ -37,7 +53,10 @@ class BaseHTTPMiddleware:
                     except Exception as exc:
                         app_exc = exc
 
-            task_group.start_soon(coro)
+            if sys.version_info < (3, 11):
+                task_group.start_soon(coro)
+            else:
+                task_group.start_soon(coro, context=context)
 
             try:
                 message = await recv_stream.receive()
@@ -72,6 +91,8 @@ class BaseHTTPMiddleware:
             response = await self.dispatch_func(request, call_next)
             await response(scope, receive, send)
             task_group.cancel_scope.cancel()
+
+        _restore_context(context)
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
