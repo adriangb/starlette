@@ -38,7 +38,8 @@ async def run_in_threadpool(
     if kwargs:  # pragma: no cover
         # run_sync doesn't accept 'kwargs', so bind them in here
         func = functools.partial(func, **kwargs)
-    return await anyio.to_thread.run_sync(func, *args)
+    limiter = anyio.CapacityLimiter(float("inf"))
+    return await anyio.to_thread.run_sync(func, *args, limiter=limiter)
 
 
 class _StopIteration(Exception):
