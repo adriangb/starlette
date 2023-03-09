@@ -124,6 +124,39 @@ app = Starlette(
 The `state` received on the requests is a **shallow** copy of the state received on the
 startup event.
 
+If you want to use a class (instead of a dictionary) or want to separate your application
+level state from request level state you can nest a class:
+
+```python
+import contextlib
+from dataclasses import dataclass
+from typing import TypedDict
+
+import httpx
+from starlette.applications import Starlette
+from starlette.routing import Route
+
+
+@dataclass
+class AppState:
+    http_client: httpx.AsyncClient
+
+class State(TypedDict):
+    app_state: AppState
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: Starlette) -> State:
+    async with httpx.AsyncClient() as client:
+        yield {"app_state": AppState(client)}
+
+
+app = Starlette(
+    lifespan=lifespan,
+    routes=[Route("/", homepage)]
+)
+```
+
 ## Running event handlers in tests
 
 You might want to explicitly call into your event handlers in any test setup
